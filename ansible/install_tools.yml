@@ -33,11 +33,13 @@
     - name: Add Uptime Kuma Helm Repo
       kubernetes.core.helm_repository:
         name: uptime-kuma
-        repo_url: "https://helm.uptime-kuma.app/"
+        repo_url: "https://louislam.github.io/uptime-kuma-helm"
 
+    
     - name: Install Uptime Kuma
       kubernetes.core.helm:
         name: uptime-kuma
         chart_ref: uptime-kuma/uptime-kuma
         release_namespace: uptime-kuma
         create_namespace: true
+        wait: yes 
