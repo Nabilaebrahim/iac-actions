@@ -38,7 +38,7 @@ module "eks" {
   cluster_endpoint_private_access = true
 
    #ip bashtian server
-  cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
+  cluster_endpoint_public_access_cidrs = ["3.226.241.153/32"]
 
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
