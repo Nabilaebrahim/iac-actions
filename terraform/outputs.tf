@@ -34,3 +34,9 @@ output "ecr_repo_name" {
   description = "ECR Repo name"
   value       = module.ecr.repository_name
 }
+
+
+output "bastion_public_ip" {
+  description = "Public IP of the Bastion Host"
+  value       = aws_instance.bastion.public_ip
+}

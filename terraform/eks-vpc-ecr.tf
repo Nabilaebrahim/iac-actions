@@ -35,12 +35,19 @@ module "eks" {
   cluster_name                   = var.name
   cluster_version                = var.k8s_version
   cluster_endpoint_public_access = true
+  cluster_endpoint_private_access = true
+
+   #ip bashtian server
+  cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
 
   vpc_id                   = module.vpc.vpc_id
   subnet_ids               = module.vpc.private_subnets
 
-  create_cluster_security_group = false
-  create_node_security_group    = false
+  # create_cluster_security_group = false
+  # create_node_security_group    = false
+
+  create_cluster_security_group = true
+  create_node_security_group    = true
 
   enable_cluster_creator_admin_permissions = true
 
