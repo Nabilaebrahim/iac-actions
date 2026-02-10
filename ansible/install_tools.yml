@@ -42,3 +42,24 @@
         release_namespace: kyverno
         create_namespace: true
 
+
+    # 3. CloudWatch Logging (Fluent Bit)
+    - name: Add Fluent Bit Helm Repo
+      kubernetes.core.helm_repository:
+        name: eks
+        repo_url: "https://aws.github.io/eks-charts"
+
+   
+   
+    - name: Install Fluent Bit for CloudWatch
+      kubernetes.core.helm:
+        name: aws-for-fluent-bit
+        chart_ref: eks/aws-for-fluent-bit
+        release_namespace: logging
+        create_namespace: true
+        values:
+          cloudWatch:
+            enabled: true
+            region: "us-east-1"
+            logGroupName: "/aws/eks/githubactions-eks/logs"
+
