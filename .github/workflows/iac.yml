@@ -403,9 +403,6 @@
 
 
 
-
-
-
 name: "infra-gitops"
 
 on:
@@ -566,31 +563,34 @@ jobs:
           chmod 400 bastion_key.pem
           CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///') || exit 0
           
-          
           ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153 || true
-          
-          
           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true || true
           
-       
           kubectl delete ingress --all --all-namespaces --timeout=60s || true
           kubectl delete svc --all --all-namespaces --timeout=60s || true
           
           echo "Waiting 150 seconds for AWS to release Network Interfaces and LoadBalancers..."
           sleep 150
 
-      - name: Force Empty ECR Repository (Batch Mode)
+      - name: Force Empty ECR Repository (Safe Mode)
         run: |
           REPOSITORY_NAME=${{ vars.ECR_REPO }}
-          echo "Cleaning ECR images for $REPOSITORY_NAME in batches of 50..."
-          while true; do
-            IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --max-items 50 --query 'imageIds[*]' --output json)
-            if [ "$IMAGE_IDS" == "[]" ] || [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" == "null" ]; then
-              echo "ECR is empty."
-              break
-            fi
-            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || break
-          done
+          echo "Checking if ECR repository $REPOSITORY_NAME exists..."
+          
+      
+          if aws ecr describe-repositories --repository-names $REPOSITORY_NAME > /dev/null 2>&1; then
+            echo "Repository found. Cleaning images in batches..."
+            while true; do
+              IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --max-items 50 --query 'imageIds[*]' --output json)
+              if [ "$IMAGE_IDS" == "[]" ] || [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" == "null" ]; then
+                echo "ECR is empty."
+                break
+              fi
+              aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || break
+            done
+          else
+            echo "Repository $REPOSITORY_NAME does not exist. Skipping."
+          fi
 
       - name: Terraform destroy
         run: terraform destroy -auto-approve -input=false
