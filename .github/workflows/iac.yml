@@ -191,6 +191,223 @@
 
 
 
+###############################################################
+
+
+# name: "infra-gitops"
+
+# on:
+#   push:
+#     branches:
+#       - main
+#     paths:  
+#       - terraform/**
+#       - 'ansible/**'
+#   workflow_dispatch: 
+
+# env:
+#   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+#   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+#   S3_BUCKET: ${{ secrets.BUCKET }}
+#   AWS_REGION: ${{ vars.AWS_REGION }}
+#   EKS_CLUSTER: ${{ vars.EKS_CLUSTER }}
+
+# jobs:
+#   terraform:
+#     name: "Deploy Infra with Terraform on AWS"
+#     runs-on: ubuntu-latest
+#     if: github.event_name == 'push'  
+
+#     defaults:
+#       run:
+#         shell: bash
+#         working-directory: ./terraform
+
+#     steps:
+#       - name: Checkout source code
+#         uses: actions/checkout@v4
+
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+
+#       - name: Terraform init
+#         id: init
+#         run: terraform init -backend-config="bucket=$S3_BUCKET"
+
+#       - name: Terraform validate
+#         id: validate
+#         run: terraform validate
+
+#       - name: Terraform plan
+#         id: plan
+#         run: terraform plan -no-color -input=false -out planfile
+#         continue-on-error: true
+
+#       - name: Terraform apply
+#         id: apply
+#         run: terraform apply -auto-approve -input=false -parallelism=1 planfile
+
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+#           aws-region: ${{ env.AWS_REGION }}
+
+#       - name: Get Kubernetes config
+#         id: getconfig
+#         if: steps.apply.outcome == 'success'
+#         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} 
+
+#       # ==========================================
+#       # Ingress
+#       # ==========================================
+#       - name: Setup SSH Tunnel for Ingress
+#         if: steps.apply.outcome == 'success'
+#         run: |
+#           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
+#           chmod 400 bastion_key.pem
+          
+#           CLUSTER_URL=$(terraform output -raw cluster_endpoint | sed 's/https:\/\///')
+         
+#           ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153
+          
+#           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
+
+#       - name: Install Ingress controller
+#         if: steps.apply.outcome == 'success' && steps.getconfig.outcome == 'success'
+#         run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0-beta.0/deploy/static/provider/aws/deploy.yaml
+
+#   install_tools:
+#     name: "Install DevOps Tools via Ansible"
+#     runs-on: ubuntu-latest
+#     needs: terraform  
+#     if: github.event_name == 'push'
+
+#     steps:
+#       - name: Checkout source code
+#         uses: actions/checkout@v4
+
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+#           aws-region: ${{ env.AWS_REGION }}
+
+#       - name: Get Kubernetes config
+#         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+
+#       # ==========================================
+#       # 
+#       # ==========================================
+#       - name: Setup SSH Tunnel for Ansible
+#         run: |
+#           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
+#           chmod 400 bastion_key.pem
+          
+#           CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///')
+          
+#           ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153
+          
+#           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
+
+#       - name: Setup Python
+#         uses: actions/setup-python@v4
+#         with:
+#           python-version: '3.10'
+
+#       - name: Install Ansible and K8s dependencies
+#         run: |
+#           pip install ansible kubernetes PyYAML
+
+#       - name: Install Helm
+#         uses: azure/setup-helm@v3
+#         with:
+#           version: 'v3.12.0'
+#         env:
+#           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+
+#       - name: Run Ansible Playbook
+#         run: |
+#           ansible-playbook ansible/install_tools.yml
+
+#   destroy:
+#     name: "Destroy Infra on AWS"
+#     runs-on: ubuntu-latest
+#     if: github.event_name == 'workflow_dispatch'
+
+#     defaults:
+#       run:
+#         shell: bash
+#         working-directory: ./terraform
+
+#     steps:
+#       - name: Checkout source code
+#         uses: actions/checkout@v4
+
+#       - name: Setup Terraform
+#         uses: hashicorp/setup-terraform@v3
+
+#       - name: Terraform init
+#         id: init
+#         run: terraform init -backend-config="bucket=$S3_BUCKET"
+      
+#       - name: Configure AWS credentials
+#         uses: aws-actions/configure-aws-credentials@v4
+#         with:
+#           aws-access-key-id: ${{ env.AWS_ACCESS_KEY_ID }}
+#           aws-secret-access-key: ${{ env.AWS_SECRET_ACCESS_KEY }}
+#           aws-region: ${{ env.AWS_REGION }}
+
+#       - name: Get Kubernetes config
+#         id: getconfig
+#         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} 
+
+#       # ==========================================
+#       # 
+#       # ==========================================
+#       - name: Setup Tunnel for Destroy
+#         run: |
+#           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
+#           chmod 400 bastion_key.pem
+#           CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///')
+#           ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153
+#           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
+
+#       - name: Delete Ingress controller
+#         run: kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0-beta.0/deploy/static/provider/aws/deploy.yaml
+
+#       - name: Empty ECR Repository
+#         run: |
+#           REPOSITORY_NAME=${{ vars.ECR_REPO }}
+#           IMAGES=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json)
+#           if [[ "$IMAGES" != "[]" ]]; then
+#             aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGES"
+#           fi
+      
+#       - name: Terraform destroy
+#         id: destroy
+#         run: terraform destroy -auto-approve -input=false
+
+
+
+
+####
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -259,19 +476,13 @@ jobs:
         if: steps.apply.outcome == 'success'
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} 
 
-      # ==========================================
-      # Ingress
-      # ==========================================
       - name: Setup SSH Tunnel for Ingress
         if: steps.apply.outcome == 'success'
         run: |
           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-          
           CLUSTER_URL=$(terraform output -raw cluster_endpoint | sed 's/https:\/\///')
-         
           ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153
-          
           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
 
       - name: Install Ingress controller
@@ -298,18 +509,12 @@ jobs:
       - name: Get Kubernetes config
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
 
-      # ==========================================
-      # 
-      # ==========================================
       - name: Setup SSH Tunnel for Ansible
         run: |
           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-          
           CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///')
-          
           ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153
-          
           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
 
       - name: Setup Python
@@ -318,8 +523,7 @@ jobs:
           python-version: '3.10'
 
       - name: Install Ansible and K8s dependencies
-        run: |
-          pip install ansible kubernetes PyYAML
+        run: pip install ansible kubernetes PyYAML
 
       - name: Install Helm
         uses: azure/setup-helm@v3
@@ -329,8 +533,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
 
       - name: Run Ansible Playbook
-        run: |
-          ansible-playbook ansible/install_tools.yml
+        run: ansible-playbook ansible/install_tools.yml
 
   destroy:
     name: "Destroy Infra on AWS"
@@ -364,9 +567,6 @@ jobs:
         id: getconfig
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} 
 
-      # ==========================================
-      # 
-      # ==========================================
       - name: Setup Tunnel for Destroy
         run: |
           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
@@ -376,14 +576,26 @@ jobs:
           kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
 
       - name: Delete Ingress controller
-        run: kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0-beta.0/deploy/static/provider/aws/deploy.yaml
+        run: kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0-beta.0/deploy/static/provider/aws/deploy.yaml || true
 
       - name: Empty ECR Repository
         run: |
           REPOSITORY_NAME=${{ vars.ECR_REPO }}
-          IMAGES=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json)
-          if [[ "$IMAGES" != "[]" ]]; then
-            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGES"
+          echo "Checking for images in $REPOSITORY_NAME..."
+          
+  
+          IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json)
+          
+          if [[ "$IMAGE_IDS" != "[]" && "$IMAGE_IDS" != "" ]]; then
+            echo "Images found. Deleting..."
+         
+            aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json > images_to_delete.json
+            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || {
+             
+              aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*].imageDigest' --output text | xargs -I {} aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids imageDigest={}
+            }
+          else
+            echo "No images found in repository."
           fi
       
       - name: Terraform destroy
