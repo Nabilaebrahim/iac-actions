@@ -90,6 +90,7 @@ module "ecr" {
   repository_name    = var.ecr_repo
   registry_scan_type = "BASIC"
   repository_type    = "private"
+  force_delete = true
 
   create_lifecycle_policy = false
   repository_image_tag_mutability = "MUTABLE" 
