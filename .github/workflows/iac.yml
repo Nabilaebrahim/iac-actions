@@ -409,8 +409,6 @@
 
 
 
-
-
 name: "infra-gitops"
 
 on:
@@ -553,7 +551,6 @@ jobs:
         uses: hashicorp/setup-terraform@v3
 
       - name: Terraform init
-        id: init
         run: terraform init -backend-config="bucket=$S3_BUCKET"
       
       - name: Configure AWS credentials
@@ -564,40 +561,32 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Get Kubernetes config
-        id: getconfig
-        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} 
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} || echo "Cluster not found"
 
-      - name: Setup Tunnel for Destroy
+      - name: Setup Tunnel for Clean Up
         run: |
           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-          CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///')
-          ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153
-          kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true
+          CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///') || exit 0
+          ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153 || true
+          kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true || true
 
-      - name: Delete Ingress controller
-        run: kubectl delete -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.12.0-beta.0/deploy/static/provider/aws/deploy.yaml || true
+      - name: Clean K8s Resources (Prevent VPC Lock)
+        run: |
+         
+          kubectl delete ingress --all --all-namespaces || true
+          kubectl delete svc --all --all-namespaces || true
+          echo "Waiting 2 minutes for AWS to release Network Interfaces..."
+          sleep 120
 
-      - name: Empty ECR Repository
+      - name: Force Empty ECR Repository
         run: |
           REPOSITORY_NAME=${{ vars.ECR_REPO }}
-          echo "Checking for images in $REPOSITORY_NAME..."
-          
-  
-          IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json)
-          
+          echo "Checking and clearing $REPOSITORY_NAME..."
+          IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json || echo "[]")
           if [[ "$IMAGE_IDS" != "[]" && "$IMAGE_IDS" != "" ]]; then
-            echo "Images found. Deleting..."
-         
-            aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json > images_to_delete.json
-            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || {
-             
-              aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*].imageDigest' --output text | xargs -I {} aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids imageDigest={}
-            }
-          else
-            echo "No images found in repository."
+            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || true
           fi
       
       - name: Terraform destroy
-        id: destroy
         run: terraform destroy -auto-approve -input=false
