@@ -407,8 +407,6 @@
 
 
 
-
-
 name: "infra-gitops"
 
 on:
@@ -567,22 +565,26 @@ jobs:
         run: |
           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-          CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///') || exit 0
-          ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153 || true
-          kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true || true
+         
+          CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///') || true
+          if [ ! -z "$CLUSTER_URL" ]; then
+            ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153 || true
+            kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true || true
+          fi
 
       - name: Clean K8s Resources (Prevent VPC Lock)
         run: |
-         
+       
           kubectl delete ingress --all --all-namespaces || true
           kubectl delete svc --all --all-namespaces || true
-          echo "Waiting 2 minutes for AWS to release Network Interfaces..."
-          sleep 120
+          echo "Waiting 150 seconds for AWS to release Network Interfaces and LoadBalancers..."
+          sleep 150
 
       - name: Force Empty ECR Repository
         run: |
           REPOSITORY_NAME=${{ vars.ECR_REPO }}
-          echo "Checking and clearing $REPOSITORY_NAME..."
+          echo "Cleaning ECR: $REPOSITORY_NAME"
+         
           IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json || echo "[]")
           if [[ "$IMAGE_IDS" != "[]" && "$IMAGE_IDS" != "" ]]; then
             aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || true
