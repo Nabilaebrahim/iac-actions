@@ -406,7 +406,6 @@
 
 
 
-
 name: "infra-gitops"
 
 on:
@@ -561,34 +560,37 @@ jobs:
       - name: Get Kubernetes config
         run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} || echo "Cluster not found"
 
-      - name: Setup Tunnel for Clean Up
+      - name: Setup Tunnel and Clean K8s
         run: |
           echo "${{ secrets.BASTION_SSH_KEY }}" > bastion_key.pem
           chmod 400 bastion_key.pem
-         
-          CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///') || true
-          if [ ! -z "$CLUSTER_URL" ]; then
-            ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153 || true
-            kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true || true
-          fi
-
-      - name: Clean K8s Resources (Prevent VPC Lock)
-        run: |
+          CLUSTER_URL=$(aws eks describe-cluster --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }} --query "cluster.endpoint" --output text | sed 's/https:\/\///') || exit 0
+          
+          
+          ssh -i bastion_key.pem -o StrictHostKeyChecking=no -f -N -L 8443:$CLUSTER_URL:443 ubuntu@3.226.241.153 || true
+          
+          
+          kubectl config set-cluster "$(kubectl config current-context)" --server=https://localhost:8443 --insecure-skip-tls-verify=true || true
+          
        
-          kubectl delete ingress --all --all-namespaces || true
-          kubectl delete svc --all --all-namespaces || true
+          kubectl delete ingress --all --all-namespaces --timeout=60s || true
+          kubectl delete svc --all --all-namespaces --timeout=60s || true
+          
           echo "Waiting 150 seconds for AWS to release Network Interfaces and LoadBalancers..."
           sleep 150
 
-      - name: Force Empty ECR Repository
+      - name: Force Empty ECR Repository (Batch Mode)
         run: |
           REPOSITORY_NAME=${{ vars.ECR_REPO }}
-          echo "Cleaning ECR: $REPOSITORY_NAME"
-         
-          IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --query 'imageIds[*]' --output json || echo "[]")
-          if [[ "$IMAGE_IDS" != "[]" && "$IMAGE_IDS" != "" ]]; then
-            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || true
-          fi
-      
+          echo "Cleaning ECR images for $REPOSITORY_NAME in batches of 50..."
+          while true; do
+            IMAGE_IDS=$(aws ecr list-images --repository-name $REPOSITORY_NAME --max-items 50 --query 'imageIds[*]' --output json)
+            if [ "$IMAGE_IDS" == "[]" ] || [ -z "$IMAGE_IDS" ] || [ "$IMAGE_IDS" == "null" ]; then
+              echo "ECR is empty."
+              break
+            fi
+            aws ecr batch-delete-image --repository-name $REPOSITORY_NAME --image-ids "$IMAGE_IDS" || break
+          done
+
       - name: Terraform destroy
         run: terraform destroy -auto-approve -input=false
